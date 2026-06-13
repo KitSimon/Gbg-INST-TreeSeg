@@ -6,19 +6,19 @@
 # modern cellpose/shapely wheels).
 #
 # Two-env workflow:
-#   1. In the AerialFormer env: run AF_3_inference-vrt_new.py to produce
+#   1. In the AerialFormer env: run AF_3_inference.py to produce
 #      the semantic raster (one-time, slow stage).
 #   2. Switch to this env: run FG_2_inference_runner.py on the ortho +
 #      semantic raster to produce the GeoPackage of crowns.
 #
 # Create the env:
 #   conda env create -f environment.yml
-#   conda activate zs-treeseg
+#   conda activate gbg_inst_treeseg
 #
 # The unit tests should pass immediately:
 #   pytest FG-TreeSeg-main/gbg_inst_treeseg/tests/
 
-name: zs-treeseg
+name: gbg_inst_treeseg
 
 channels:
   - pytorch
