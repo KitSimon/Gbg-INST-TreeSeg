@@ -1,0 +1,30 @@
+# Byte-compiled
+__pycache__/
+*.py[cod]
+
+# Project data (training tiles, checkpoints, inference outputs) —
+# same convention as Gbg-SEM-TreeSeg
+Project_1/
+tests/
+
+# Machine-specific absolute paths (copy local_paths.example.py → local_paths.py)
+local_paths.py
+
+# Internal-only docs (the test suite is not shipped)
+docs/testing.md
+
+# PyTorch / Cellpose weights
+*.pth
+*.pt
+
+# Windows/WSL download-marker artifacts
+*Zone.Identifier
+
+# Editors / caches
+.vscode/
+.idea/
+.pytest_cache/
+
+# Scratch script files
+test_las_mt.py
+test_las.py

@@ -1,0 +1,99 @@
+# Standalone conda env for the gbg_inst_treeseg pipeline.
+#
+# Use this when you want to run the instance-segmentation half of the
+# pipeline in isolation from the AerialFormer env (e.g. because the
+# AerialFormer env pins old numpy/mmcv binaries that conflict with
+# modern cellpose/shapely wheels).
+#
+# Two-env workflow:
+#   1. In the AerialFormer env: run AF_3_inference-vrt_new.py to produce
+#      the semantic raster (one-time, slow stage).
+#   2. Switch to this env: run FG_2_inference_runner.py on the ortho +
+#      semantic raster to produce the GeoPackage of crowns.
+#
+# Create the env:
+#   conda env create -f environment.yml
+#   conda activate zs-treeseg
+#
+# The unit tests should pass immediately:
+#   pytest FG-TreeSeg-main/gbg_inst_treeseg/tests/
+
+name: zs-treeseg
+
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+
+dependencies:
+  - python=3.11
+
+  # Numerical core (modern stack — no NumPy 1.x backward-compat needed here)
+  - numpy>=1.26,<3
+  - scipy>=1.11
+  - pandas>=2.0
+  # pandas is used directly (DataFrames in the per-tile feature-store index)
+  # and indirectly by geopandas. Pinned >=2.0 to match the rest of the stack.
+
+  # Geospatial stack — conda-forge ships consistent GDAL/GEOS/PROJ binaries,
+  # which is the main reason to use conda over pure pip for this pipeline.
+  - rasterio>=1.3
+  - geopandas>=1.0
+  - shapely>=2.0.4
+  - pyproj>=3.6
+  - libgdal>=3.7
+  - rtree>=1.0
+  # rtree is imported directly (rtree.index.Index) by chunked_postprocess /
+  # crown_postprocess for cross-tile spatial lookups; geopandas also uses it
+  # for .sindex but we pin it explicitly so it can't get GC'd from the env.
+  - pyarrow>=14
+  # Backs (geo)pandas parquet I/O. The per-tile feature store
+  # (feature_store.py) and tile-grid (vector_export.py) are written as
+  # GeoParquet; without pyarrow, pandas/geopandas raise on .to_parquet /
+  # .read_parquet. Required.
+
+  # Visualisation (used by the FG_3 QA runner and the training-loss plots
+  # written by training_monitor.py).
+  - matplotlib-base>=3.7
+
+  # AOI picker (FG_2_inference_runner.py with TEST_SUBSET_PICKER=True opens a
+  # native window embedding Leaflet via QWebEngineView for selecting a test
+  # subset of a large VRT). Skip these only if you never use the picker —
+  # the rest of the pipeline runs without Qt.
+  - pyqt>=5.15
+  - pyqtwebengine>=5.15
+
+  # NOTE: albumentations is installed via pip (see pip: block below) rather
+  # than conda. The conda-forge build pulls in the heavy `opencv` package
+  # (Qt, qt-webengine, GStreamer, ffmpeg, X11) which routinely conflicts
+  # with pinned stacks in geospatial envs. The PyPI wheel uses
+  # opencv-python-headless (no Qt/X11) and avoids the whole graph.
+  # An equivalent PySide6 stack also works; aoi_picker.py tries PyQt5 first
+  # and falls back to PySide6 if it's the only one installed.
+
+  # PyTorch — required by Cellpose. Adjust pytorch-cuda to match your driver:
+  #   pytorch-cuda=12.1   (CUDA 12.x drivers — modern default)
+  #   pytorch-cuda=11.8   (CUDA 11.x drivers)
+  # For CPU-only inference, drop pytorch-cuda entirely and use:
+  #   - pytorch>=2.1
+  #   - cpuonly
+  - pytorch>=2.1
+  - pytorch-cuda=11.8
+  - torchvision
+
+  # Dev / test
+  - pytest>=8.0
+
+  - pip
+  - pip:
+      # Cellpose 4.x — installs the cpsam (Cellpose-SAM ViT-H) checkpoint on
+      # first use. If you want the latest dev build instead of the pinned
+      # release, replace this line with:
+      #   - git+https://github.com/MouseLand/cellpose.git
+      - cellpose>=4.0
+
+      # Training-time photometric augmentation for shaded / low-light tree
+      # crowns (RandomShadow, RandomGamma, CLAHE, HueSaturationValue,
+      # GaussNoise, RandomBrightnessContrast). Pulls in opencv-python-headless
+      # automatically — much lighter than the conda opencv variant.
+      - albumentations>=1.4

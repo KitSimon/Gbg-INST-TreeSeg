@@ -1,0 +1,35 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Gbg-INST-TreeSeg"
+abstract: >-
+  Tree-crown instance segmentation pipeline for large aerial orthophoto mosaics,
+  combining an AerialFormer semantic prior with Cellpose-SAM flow-guided instance
+  separation. Independent implementation of the method described in FG-TreeSeg
+  (Chen et al., 2026).
+type: software
+authors:
+  - name: "KitSimon"
+license: AGPL-3.0-or-later
+repository-code: "https://github.com/KitSimon/Gbg-INST-TreeSeg"
+year: 2026
+keywords:
+  - tree crown delineation
+  - instance segmentation
+  - remote sensing
+  - Cellpose
+  - GeoAI
+references:
+  - type: article
+    title: "FG-TreeSeg: Flow-Guided Tree Crown Segmentation without Instance Annotations"
+    authors:
+      - family-names: Chen
+        given-names: Pengyu
+      - family-names: Lyu
+        given-names: Fangzheng
+      - family-names: Wang
+        given-names: Sicheng
+      - family-names: Wang
+        given-names: Cuizhen
+    journal: "IEEE Geoscience and Remote Sensing Letters"
+    year: 2026
+    doi: "10.1109/LGRS.2026.3693969"
