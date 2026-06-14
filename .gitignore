@@ -6,6 +6,7 @@ __pycache__/
 # same convention as Gbg-SEM-TreeSeg
 Project_1/
 tests/
+_archive/
 
 # Machine-specific absolute paths (copy local_paths.example.py → local_paths.py)
 local_paths.py

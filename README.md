@@ -1,141 +1,107 @@
 # Gbg-INST-TreeSeg — Tree-Crown Instance Segmentation
 
-A two-stage pipeline that turns an RGB-IR orthophoto into a GeoPackage of
-individual tree-crown polygons. It is an independent implementation of the
-method described in **FG-TreeSeg** (Chen et al., 2026; see
-[Attribution & citation](#attribution--citation)): the semantic prior is
-provided by the **AerialFormer** model trained in the companion
-[Gbg-SEM-TreeSeg](https://github.com/KitSimon/Gbg-SEM-TreeSeg) repository, and
-Cellpose-SAM flow-guided instance separation is run tile-by-tile across an
-arbitrarily large mosaic with a memory-bounded, parallel **vector**
-reconciliation pass.
+**G**othen**b**ur**g** **INST**ance segmentation — **Tree Seg**mentation.
 
-```
-                ┌─────────────────────┐
- Orthophoto ──► │ AF_3 (AerialFormer) │ ──► Semantic raster (uint8: bg/water/tree, 255=nodata)
-   (VRT/TIF)    │  (Gbg-SEM-TreeSeg)  │
-                └─────────────────────┘
-                                              │
- Orthophoto ─────────────────────────────────►├─► gbg_inst_treeseg.utils.inference.run_pipeline
-                                              │      ├─ tile grid (1024 px, 256 px overlap)
-                                              │      ├─ Cellpose-SAM per tile (canopy-masked)
-                                              │      ├─ rasterio.features.shapes → per-tile polygons
-                                              │      ├─ stream → GeoParquet shards (bounded RAM)
-                                              │      └─ chunked postprocess (super-tiles, parallel):
-                                              │           ├─ stitch  (cull seam-cropped)
-                                              │           ├─ merge_duplicates (union same-crown clusters)
-                                              │           └─ resolve_mosaic   (clip overlaps, no gaps)
-                                              ▼
-                                          tree_crowns.gpkg
-                                          (instance_id, area_px, area_m2,
-                                           centroid_x, centroid_y,
-                                           touches_image_edge)
-                                          + tile_grid.gpkg (sidecar)
-                                          + dedup_culled.gpkg (optional diagnostic)
-```
+Turns an RGB aerial orthophoto into a GeoPackage of individual tree-crown
+polygons. An **AerialFormer** semantic prior — from the companion
+[Gbg-SEM-TreeSeg](https://github.com/KitSimon/Gbg-SEM-TreeSeg) repository — masks
+the canopy, then **Cellpose-SAM** flow-guided instance separation runs
+tile-by-tile across an arbitrarily large mosaic, followed by a memory-bounded,
+parallel **vector** reconciliation pass. It is an independent implementation of
+the method described in **FG-TreeSeg** (Chen et al., 2026).
 
-A parallel pipeline (`FG_0` → `FG_1`) fine-tunes Cellpose-SAM on per-tree
-crown polygons, producing a checkpoint that the inference runner can swap in.
+Input data during development was the Lantmäteriet orthophoto 2022 (RGB, 0.16 m) over Gothenburg,
+Sweden, in SWEREF99 12 00 (EPSG:3007). The imagery and training data are **not**
+included in this repository.
 
-## Layout
-
-Runners live at the repository root (one file per pipeline stage) and are run
-from there. All of the implementation lives under `utils/`. Project data lives
-under `Project_1/` (gitignored), mirroring the Gbg-SEM-TreeSeg convention.
-
-```
-gbg_inst_treeseg/                 ← run all runners from here
-├── project_paths.py              ← directory layout (single source of truth)
-├── local_paths.example.py        ← template for machine-specific paths (copy → local_paths.py)
-├── FG_0_preprocess_runner.py     ← build Cellpose training data
-├── FG_1_train_runner.py          ← fine-tune Cellpose-SAM
-├── FG_2_inference_runner.py      ← full instance inference (the headline runner)
-├── FG_3_las_filter_runner.py     ← LiDAR height filter on the FG_2 crowns
-├── tools/
-│   ├── FG_2a_postprocess_resume.py  ← resume FG_2's postprocess from feature shards
-│   └── FG_2b_qa_preview.py          ← quick PNG sanity check of FG_2 output
-├── utils/                        ← pipeline implementation (see docs/)
-├── docs/                         ← configuration, design notes, limitations
-└── Project_1/                    ← project data (gitignored)
-```
-
-The per-stage `Project_1/` subdirectories (`FG_0_training` …
-`FG_3_las_filtered`) are created by the stage that produces them and are
-defined once in `project_paths.py` — change `PROJECT_NAME` there to start a
-fresh project.
-
-Two artifacts cross the boundary from the Gbg-SEM-TreeSeg working copy
-(via the `GBG_SEM_ROOT` path):
-
-| Gbg-SEM-TreeSeg artifact | Consumed by |
-|---|---|
-| `Project_1/AF_0_training/hull30.gpkg` (per-tree crown polygons) | FG_0, as Cellpose training labels |
-| `Project_1/AF_3_inference_results/<run>/<stem>_segmentation.tif` | FG_2, as the canopy prior |
-
-## Install
+## Installation
 
 ```bash
 conda env create -f environment.yml
-conda activate zs-treeseg
+conda activate gbg_inst_treeseg
 ```
 
-The `environment.yml` defaults to a CUDA PyTorch build — edit `pytorch-cuda`
-to match your driver, or drop it and add `cpuonly` for CPU-only inference.
+The `environment.yml` defaults to a CUDA PyTorch build — edit `pytorch-cuda` to
+match your driver, or drop it and add `cpuonly` for CPU-only inference.
 
-Alternatively, if you already run AerialFormer, you can install the extra
-deps into that env instead:
+Alternatively, if you already run AerialFormer, install the extra deps into that
+env instead:
 
 ```bash
 pip install "cellpose>=4.0" geopandas shapely pyogrio rtree pyarrow
 pip install "numpy<2"   # only if the env pins numpy 2.x against NumPy-1.x-built wheels
 ```
 
-### Configure machine-specific paths
+### Machine-specific paths
 
-The absolute paths to your inputs (ortho mosaic, LAS tiles, the Gbg-SEM-TreeSeg
-working copy) live in `local_paths.py`, which is **gitignored** so your paths
-never get committed. Create it from the template:
+Absolute paths to your inputs (ortho mosaic, LAS tiles, the Gbg-SEM-TreeSeg
+working copy) live in `local_paths.py`, which is **gitignored** so your paths are
+never committed. Create it from the template:
 
 ```bash
 cp local_paths.example.py local_paths.py
-# then edit local_paths.py: set ORTHO_PATH, GBG_SEM_ROOT, LAS_DIR, TIF_DIR
+# then edit: ORTHO_PATH, GBG_SEM_ROOT, LAS_DIR, TIF_DIR
 ```
 
-`project_paths.py` imports these and raises a clear error if `local_paths.py`
-is missing.
+`project_paths.py` imports these and raises a clear error if `local_paths.py` is
+missing.
 
-## Inference quick-start
+## Pipeline
+
+```
+ Orthophoto ─► AF_3 (Gbg-SEM-TreeSeg) ─► semantic raster ─┐
+ Orthophoto ──────────────────────────────────────────────┴─► FG_2 ─► tree_crowns.gpkg
+                                                              (Cellpose-SAM, tiled,
+                                                               vector reconciliation)
+```
+
+The workflow is driven by numbered stages. Each `FG_*_runner.py` script at the
+repository root holds its configuration at the top — edit and run the runners
+from the repository root.
+
+| Stage | Script | Purpose |
+|---|---|---|
+| FG_0 | `FG_0_preprocess_runner.py` | Build Cellpose training tiles from a per-tree crown GeoPackage |
+| FG_1 | `FG_1_train_runner.py` | Fine-tune Cellpose-SAM on those tiles (optional; the default `cpsam` checkpoint also works) |
+| FG_2 | `FG_2_inference_runner.py` | **Full instance inference** — tiled Cellpose-SAM under the semantic prior + parallel vector reconciliation → crown polygons |
+| FG_3 | `FG_3_las_filter_runner.py` | Optional LiDAR height filter: flag/drop crowns with no real canopy height under them |
+| tools | `tools/FG_2a_postprocess_resume.py`, `tools/FG_2b_qa_preview.py` | Resume FG_2's postprocess from feature shards; render a QA PNG preview |
+
+Runners live at the repository root; all implementation is under `utils/` (see
+[Documentation](#documentation)). Project data lives under `Project_1/`
+(gitignored), mirroring the Gbg-SEM-TreeSeg convention; the per-stage
+subdirectories are defined once in `project_paths.py` — change `PROJECT_NAME`
+there to start a fresh project.
+
+## Quickstart
+
+### Inference
 
 ```bash
-# 1. (AerialFormer env, Gbg-SEM-TreeSeg repo) Run AF_3 to produce the
-#    semantic raster — edit the constants in AF_3_inference_runner.py, then:
+# 1. (AerialFormer env, Gbg-SEM-TreeSeg repo) produce the semantic raster —
+#    edit the constants in AF_3_inference_runner.py, then:
 python AF_3_inference_runner.py
 
-# 2. (this repo) Point SEMANTIC_RASTER_PATH / ORTHO_PATH in
+# 2. (this repo) point SEMANTIC_RASTER_PATH and ORTHO_PATH in
 #    FG_2_inference_runner.py at the AF_3 output and the ortho, then:
 python FG_2_inference_runner.py
 ```
 
-Outputs (in `Project_1/FG_2_inference_results/`):
+Outputs land in `Project_1/FG_2_inference_results/`:
 
-- `<stem>_crowns.gpkg` — final crown polygons. Schema: `instance_id`,
-  `area_px`, `area_m2`, `centroid_x`, `centroid_y`, `touches_image_edge`,
-  `geometry`.
+- `<stem>_crowns.gpkg` — final crown polygons. Schema: `instance_id`, `area_px`,
+  `area_m2`, `centroid_x`, `centroid_y`, `touches_image_edge`, `geometry`.
 - `<stem>_tile_grid.gpkg` — sidecar of tile rectangles with image-edge flags.
-- `<stem>_dedup_culled.gpkg` — optional diagnostic (when
-  `WRITE_DEDUP_CULLED=True`); see [docs/configuration.md](docs/configuration.md).
+- `<stem>_dedup_culled.gpkg` — optional diagnostic (when `WRITE_DEDUP_CULLED=True`;
+  see [docs/configuration.md](docs/configuration.md)).
 
-Follow-ups:
+Follow-ups: `FG_3_las_filter_runner.py` cross-checks each crown against the LiDAR
+point cloud (p99 normalized height) and flags detections with no real canopy
+height; `tools/FG_2b_qa_preview.py` renders a quick PNG overlay for a sanity check
+before opening QGIS; `tools/FG_2a_postprocess_resume.py` resumes an interrupted
+postprocess from the per-tile feature shards.
 
-- `FG_3_las_filter_runner.py` cross-checks every crown against the LiDAR
-  point cloud (p99 normalized height) and flags detections with no real
-  canopy height under them.
-- `tools/FG_2b_qa_preview.py` renders a quick PNG overlay for a fast sanity
-  check before opening QGIS.
-- `tools/FG_2a_postprocess_resume.py` resumes FG_2's chunked postprocess from
-  the per-tile feature shards if a run was interrupted.
-
-## Fine-tuning quick-start
+### Fine-tuning (optional)
 
 ```bash
 # 1. Build training tiles from a per-tree GeoPackage
@@ -146,37 +112,48 @@ python FG_0_preprocess_runner.py
 #    (checkpoint + monitors in Project_1/FG_1_training_runs/)
 python FG_1_train_runner.py
 
-# 3. Set CELLPOSE_CHECKPOINT in FG_2_inference_runner.py to the path printed
-#    by step 2, then re-run inference.
+# 3. Set CELLPOSE_CHECKPOINT in FG_2_inference_runner.py to the path printed by
+#    step 2, then re-run inference.
 ```
 
 ## Documentation
 
+- [docs/walkthrough.md](docs/walkthrough.md) — detailed pipeline diagram,
+  annotated repository layout, and a stage-by-stage data-prep / setup / run
+  walkthrough with the config decisions and gotchas that matter.
 - [docs/configuration.md](docs/configuration.md) — every runner knob, QC tile
   filtering, training monitoring, and the `dedup_culled` diagnostic schema.
 - [docs/design.md](docs/design.md) — design decisions (precomputed semantic
-  raster, vector reconciliation, memory-bounded parallel postprocess, …) and
-  scaling figures.
-- [docs/limitations.md](docs/limitations.md) — known limitations and further
-  work.
+  raster, vector reconciliation, memory-bounded parallel postprocess) and scaling
+  figures.
+- [docs/limitations.md](docs/limitations.md) — known limitations and further work.
 
-## License
+## Related repositories
 
-Released under the **GNU Affero General Public License v3.0 or later**
-(AGPL-3.0-or-later). See [LICENSE](LICENSE). Third-party dependencies
-(Cellpose, GDAL/rasterio/geopandas, PyTorch, …) are used as installed
-packages, not vendored, and retain their own licenses.
+This pipeline is the **instance-segmentation stage** of a two-stage workflow. Its
+upstream sibling,
+**[Gbg-SEM-TreeSeg](https://github.com/KitSimon/Gbg-SEM-TreeSeg)**, trains the
+AerialFormer semantic model and produces the artifacts this repo consumes (via
+the `GBG_SEM_ROOT` path in `local_paths.py`):
 
-## Attribution & citation
+| Gbg-SEM-TreeSeg artifact | Consumed by | As |
+|---|---|---|
+| `Project_1/AF_0_training/<tree polygons>.gpkg` (per-tree crown polygons) | FG_0 | Cellpose training labels |
+| `Project_1/AF_3_inference_results/<run>/<stem>_segmentation.tif` | FG_2 | canopy prior (tree class = 2) |
+
+The semantic raster must be pixel-aligned with the orthophoto (same grid, CRS,
+extent) — it is, when AF_3 was run on the same input.
+
+## Attribution
 
 This pipeline is an **independent implementation of the method** described in
-FG-TreeSeg — no code of substance from the original work is reused. It also
-builds on **Cellpose-SAM** (flow-guided instance separation) and the companion
-**[Gbg-SEM-TreeSeg](https://github.com/KitSimon/Gbg-SEM-TreeSeg)** /
-AerialFormer semantic prior.
+FG-TreeSeg. It also builds on **Cellpose-SAM** (flow-guided instance separation)
+ and the companion
+**[Gbg-SEM-TreeSeg](https://github.com/KitSimon/Gbg-SEM-TreeSeg)** / AerialFormer
+semantic prior.
 
-If you use this software in academic work, please cite both this repository
-(see [CITATION.cff](CITATION.cff)) and the FG-TreeSeg paper:
+If you use this software in academic work, please cite both this repository (see
+[CITATION.cff](CITATION.cff)) and the FG-TreeSeg paper:
 
 ```bibtex
 @ARTICLE{11520829,
@@ -187,10 +164,16 @@ If you use this software in academic work, please cite both this repository
   volume={},
   number={},
   pages={1-1},
-  keywords={Modeling;Trees (botanical);Vegetation;Fluid flow;Training;Instance segmentation;Remote sensing;Pixel;Annotations;Visualization;Instance segmentation;tree crown delineation;foundation model;GeoAI},
   doi={10.1109/LGRS.2026.3693969}}
 ```
 
-> Note: FG-TreeSeg was published under the name *ZS-TreeSeg* in its earlier
-> (v1) form; the authors renamed it FG-TreeSeg in the revised paper. The
-> citation above is the correct, current reference.
+> Note: FG-TreeSeg was published under the name *ZS-TreeSeg* in its earlier (v1)
+> form; the authors renamed it FG-TreeSeg in the revised paper. The citation above
+> is the correct, current reference.
+
+## License
+
+Released under the **GNU Affero General Public License v3.0 or later**
+(AGPL-3.0-or-later). See [LICENSE](LICENSE). Third-party dependencies (Cellpose,
+GDAL/rasterio/geopandas, PyTorch, …) are used as installed packages, not vendored,
+and retain their own licenses.
